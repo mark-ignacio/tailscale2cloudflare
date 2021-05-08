@@ -201,5 +201,6 @@ func Tailscale2Cloudflare(tailscaleKey, tailscaleTailnet, cloudflareToken, cloud
 			log.Debug().Str("body", string(body)).Msg("record POST response")
 		}
 	}
+	// TODO: update records
 	return nil
 }

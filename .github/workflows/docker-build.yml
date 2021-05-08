@@ -1,0 +1,23 @@
+name: docker-build-push
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Log in to GHCR
+      uses: docker/login-action@v1.9.0
+      with:
+        registry: ghcr.io
+        username: ${{ github.repsitory_owner }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    - uses: docker/build-push-action@v2.4.0
+      with:
+        context: .
+        push: true
+        tags: |
+          tailscale2cloudflare:latest
+          tailscale2cloudflare:${{ GITHUB_SHA }}

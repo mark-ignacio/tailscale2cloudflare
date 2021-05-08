@@ -5,7 +5,7 @@ A tiny utility to run periodically that updates DNS entries for your Tailscale d
 It can(not):
 
 - [x] Create A records based on Tailscale hostnames
-- [x] Update existing A records
+- [ ] Update existing A records
 - [x] Support subdomain suffixes
 - [ ] Support multiple A records for a host
 
