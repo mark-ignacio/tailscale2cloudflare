@@ -20,4 +20,4 @@ jobs:
         push: true
         tags: |
           tailscale2cloudflare:latest
-          tailscale2cloudflare:${{ GITHUB_SHA }}
+          tailscale2cloudflare:${{ github.sha }}
