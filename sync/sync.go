@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/rs/zerolog/log"
 )
@@ -125,23 +126,32 @@ func Tailscale2Cloudflare(tailscaleKey, tailscaleTailnet, cloudflareToken, cloud
 		recordsByName = make(map[string][]dnsRecord, len(recordsResponse.Result))
 		toUpdate      = map[string][]string{}
 		toCreate      = map[string][]string{}
+		toDelete      = map[string][]string{}
 		zoneName      string
+		recordSuffix  string
 	)
 	if len(recordsResponse.Result) == 0 {
 		return fmt.Errorf("known TODO: handle getting the zone name from a separate request instead of skimming it off one of the record responses")
 	}
 	zoneName = recordsResponse.Result[0].ZoneName
+	if cloudflareSubdomain != "" {
+		recordSuffix = fmt.Sprintf("%s.%s", cloudflareSubdomain, zoneName)
+	} else {
+		recordSuffix = zoneName
+	}
 	// compute what needs updating
 	for _, record := range recordsResponse.Result {
 		recordsByName[record.Name] = append(recordsByName[record.Name], record)
+		// compute what needs removing
+		if strings.HasSuffix(record.Name, recordSuffix) {
+			stripped := strings.ReplaceAll(record.Name, "."+recordSuffix, "")
+			if hostname2IPv4s[stripped] == nil {
+				toDelete[record.Name] = append(toDelete[record.Name], record.ID)
+			}
+		}
 	}
 	for hostname, ipv4s := range hostname2IPv4s {
-		var recordName string
-		if cloudflareSubdomain != "" {
-			recordName = fmt.Sprintf("%s.%s.%s", hostname, cloudflareSubdomain, zoneName)
-		} else {
-			recordName = fmt.Sprintf("%s.%s", hostname, zoneName)
-		}
+		recordName := fmt.Sprintf("%s.%s", hostname, recordSuffix)
 		// requires updating
 		if existingRecords := recordsByName[recordName]; existingRecords != nil {
 			if len(existingRecords) == 1 {
@@ -162,13 +172,14 @@ func Tailscale2Cloudflare(tailscaleKey, tailscaleTailnet, cloudflareToken, cloud
 	log.Info().
 		Interface("toUpdate", toUpdate).
 		Interface("toCreate", toCreate).
+		Interface("toDelete", toDelete).
 		Msg("queued Cloudflare changes")
 	// update 'em
 	// ...or just leave because it's a dry run!
 	if opts.DryRun {
 		return nil
 	}
-	cfCreateRecordURL := fmt.Sprintf("https://api.cloudflare.com/client/v4/zones/%s/dns_records", cloudflareZone)
+	cfMutateRecordURL := fmt.Sprintf("https://api.cloudflare.com/client/v4/zones/%s/dns_records", cloudflareZone)
 	for name, ipv4s := range toCreate {
 		for _, ipv4 := range ipv4s {
 			body, err := json.Marshal(map[string]interface{}{
@@ -181,7 +192,7 @@ func Tailscale2Cloudflare(tailscaleKey, tailscaleTailnet, cloudflareToken, cloud
 			if err != nil {
 				return fmt.Errorf("error creating DNS POST request body: %s", err)
 			}
-			request, err := http.NewRequest("POST", cfCreateRecordURL, bytes.NewBuffer(body))
+			request, err := http.NewRequest("POST", cfMutateRecordURL, bytes.NewBuffer(body))
 			if err != nil {
 				return fmt.Errorf("error creating DNS POST request: %s", err)
 			}
@@ -202,5 +213,29 @@ func Tailscale2Cloudflare(tailscaleKey, tailscaleTailnet, cloudflareToken, cloud
 		}
 	}
 	// TODO: update records
+	// delete records
+	for _, recordIDs := range toDelete {
+		for _, recordID := range recordIDs {
+			url := fmt.Sprintf("%s/%s", cfMutateRecordURL, recordID)
+			request, err := http.NewRequest(http.MethodDelete, url, nil)
+			if err != nil {
+				return fmt.Errorf("error creating DNS DELETE request: %s", err)
+			}
+			request.Header.Set("Authorization", fmt.Sprintf("Bearer %s", cloudflareToken))
+			request.Header.Set("Content-Type", "application/json")
+			response, err := http.DefaultClient.Do(request)
+			if err != nil {
+				return fmt.Errorf("error performing Cloudflare record DELETE: %s", err)
+			}
+			body, err = ioutil.ReadAll(response.Body)
+			if err != nil {
+				return fmt.Errorf("error reading Cloudflare record DELETE: %s", err)
+			}
+			if response.StatusCode > http.StatusAccepted {
+				return fmt.Errorf(">202 response to Cloudflare record DELETE: %d: %s", response.StatusCode, body)
+			}
+			log.Debug().Str("body", string(body)).Msg("record POST response")
+		}
+	}
 	return nil
 }
