@@ -189,6 +189,7 @@ func Tailscale2Cloudflare(tailscaleKey, tailscaleTailnet, cloudflareToken, cloud
 				"ttl":     1,
 				"proxied": false,
 			})
+			log.Debug().Str("body", string(body)).Msg("updating record")
 			if err != nil {
 				return fmt.Errorf("error creating DNS POST request body: %s", err)
 			}
