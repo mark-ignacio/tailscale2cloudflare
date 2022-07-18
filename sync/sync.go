@@ -100,8 +100,9 @@ func Tailscale2Cloudflare(tailscaleKey, tailscaleTailnet, cloudflareToken, cloud
 			logger.Info().Msg("skipping unauthorized device")
 			continue
 		}
-		// juuust ignore this one
-		if name == "hello.ipn.dev" {
+		// juuust ignore these ones
+		switch name {
+		case "hello.ipn.dev", "hello.tailscale.com":
 			continue
 		}
 		name2IPv4s[name] = v4Addresses(device.Addresses)
