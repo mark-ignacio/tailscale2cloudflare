@@ -9,7 +9,9 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+	"inet.af/netaddr"
 )
 
 type tailnetDevicesResponse struct {
@@ -19,6 +21,7 @@ type tailnetDevicesResponse struct {
 // https://github.com/tailscale/tailscale/blob/main/api.md#tailnet-devices-get
 type tailnetDevice struct {
 	// there are other fields, but we only care about
+	Name       string
 	Hostname   string
 	Addresses  []string
 	Authorized bool
@@ -40,7 +43,8 @@ type dnsRecord struct {
 }
 
 type Tailscale2CloudflareOptions struct {
-	DryRun bool
+	DryRun       bool
+	UseHostnames bool // old behavior - https://github.com/mark-ignacio/tailscale2cloudflare/issues/2
 }
 
 func Tailscale2Cloudflare(tailscaleKey, tailscaleTailnet, cloudflareToken, cloudflareZone, cloudflareSubdomain string, opts *Tailscale2CloudflareOptions) error {
@@ -72,23 +76,37 @@ func Tailscale2Cloudflare(tailscaleKey, tailscaleTailnet, cloudflareToken, cloud
 	}
 	log.Debug().Interface("devices", devicesResponse.Devices).Msg("GET devices")
 	// filter out authorized = false
-	var hostname2IPv4s = map[string][]string{}
+	var (
+		name2IPv4s = map[string][]string{}
+	)
 	for _, device := range devicesResponse.Devices {
+		var (
+			name   string
+			logger zerolog.Logger
+		)
+		if opts.UseHostnames {
+			name = device.Hostname
+			logger = log.With().Str("hostname", name).Logger()
+		} else {
+			// the Name field is formatted as "[machineName].[tailnet]"
+			name = strings.Replace(device.Name, "."+tailscaleTailnet, "", 1)
+			logger = log.With().Str("machineNmae", name).Logger()
+		}
 		// does this happen? probably to someone
-		if _, dupe := hostname2IPv4s[device.Hostname]; dupe {
-			log.Warn().Str("hostname", device.Hostname).Msg("found multiple tailscale devices with the same hostname - the last listed device with this hostname will be used")
+		if _, dupe := name2IPv4s[name]; dupe {
+			logger.Warn().Msg("found multiple tailscale devices with the same hostname - the last listed device with this hostname will be used")
 		}
 		if !device.Authorized {
-			log.Info().Str("hostname", device.Hostname).Msg("skipping unauthorized device")
+			logger.Info().Msg("skipping unauthorized device")
 			continue
 		}
 		// juuust ignore this one
-		if device.Hostname == "hello.ipn.dev" {
+		if name == "hello.ipn.dev" {
 			continue
 		}
-		hostname2IPv4s[device.Hostname] = device.Addresses
+		name2IPv4s[name] = v4Addresses(device.Addresses)
 	}
-	log.Debug().Interface("mapping", hostname2IPv4s).Msg("hostname -> IPv4 mappings")
+	log.Debug().Interface("mapping", name2IPv4s).Msg("IPv4 mappings")
 	// get cloudflare records
 	cfRecordsURLValues := url.Values{}
 	cfRecordsURLValues.Set("per_page", "100")
@@ -145,12 +163,12 @@ func Tailscale2Cloudflare(tailscaleKey, tailscaleTailnet, cloudflareToken, cloud
 		// compute what needs removing
 		if strings.HasSuffix(record.Name, recordSuffix) {
 			stripped := strings.ReplaceAll(record.Name, "."+recordSuffix, "")
-			if hostname2IPv4s[stripped] == nil {
+			if name2IPv4s[stripped] == nil {
 				toDelete[record.Name] = append(toDelete[record.Name], record.ID)
 			}
 		}
 	}
-	for hostname, ipv4s := range hostname2IPv4s {
+	for hostname, ipv4s := range name2IPv4s {
 		recordName := fmt.Sprintf("%s.%s", hostname, recordSuffix)
 		// requires updating
 		if existingRecords := recordsByName[recordName]; existingRecords != nil {
@@ -239,4 +257,19 @@ func Tailscale2Cloudflare(tailscaleKey, tailscaleTailnet, cloudflareToken, cloud
 		}
 	}
 	return nil
+}
+
+func v4Addresses(addrs []string) []string {
+	var v4s []string
+	for _, addr := range addrs {
+		parsed, err := netaddr.ParseIP(addr)
+		if err != nil {
+			log.Warn().Err(err).Msg("error parsing IP, continuing")
+			continue
+		}
+		if parsed.Is4() {
+			v4s = append(v4s, addr)
+		}
+	}
+	return v4s
 }
