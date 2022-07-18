@@ -33,7 +33,7 @@ var rootCmd = &cobra.Command{
 	Short: "Synchronizes Tailscale device lists with a Cloudflare (sub)domain.",
 	Long: `Specify command line flags or env vars in order for tailscale2cloudflare to:
 1.  GET  https://api.tailscale.com/api/v2/tailnet/:tailnet/devices?fields=default
-2.  For each authorized host, upsert a ${hostname}.${cloudflare-subdomain} with either
+2.  For each authorized host, upsert a ${machineName}.${cloudflare-subdomain} with either
 2a. POST https://api.cloudflare/com/client/v4/zones/:zone_identifier/dns_records
 2b. PUT  https://api.cloudflare/com/client/v4/zones/:zone_identifier/dns_records/:identifier
 
@@ -61,7 +61,8 @@ See docs and flags for details.`,
 			log.Fatal().Str("cloudflare-subdomain", cfSub).Msg("Remove '.' at the start/end of this field")
 		}
 		err := sync.Tailscale2Cloudflare(tsKey, tsTailnet, cfToken, cfZone, cfSub, &sync.Tailscale2CloudflareOptions{
-			DryRun: viper.GetBool("dry-run"),
+			DryRun:       viper.GetBool("dry-run"),
+			UseHostnames: viper.GetBool("sync-hostnames"),
 		})
 		if err != nil {
 			log.Fatal().Err(err).Msg("error synchronizing Tailscale -> Cloudflare records")
@@ -96,6 +97,7 @@ func init() {
 	persistent.BoolP("dry-run", "n", false, "perform a dry run instead of updating")
 	persistent.BoolP("verbose", "v", false, "enable debug-level logging")
 	persistent.String("level-name", "level", "field name for structured log message level")
+	persistent.Bool("sync-hostnames", false, "retain old behavior of syncing hostnames instead of unique machine names")
 	viper.BindPFlags(persistent)
 }
 
